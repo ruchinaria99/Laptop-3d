@@ -1,0 +1,1389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Interactive 3D laptop</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sacramento&display=swap">
+<style>
+  :root {
+    --page: #f4f5f7;
+    --ink: #1d2229;
+    --ring: rgba(29, 34, 41, 0.28);
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #15171b;
+      --ink: #e8ebef;
+      --ring: rgba(232, 235, 239, 0.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #15171b;
+    --ink: #e8ebef;
+    --ring: rgba(232, 235, 239, 0.34);
+  }
+  html { height: 100%; scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    margin: 0;
+    height: 100%;
+    background: var(--page);
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+
+  /* sky layer: behind everything, never takes clicks */
+  .clouds {
+    --band: max(30vh, 200px);
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .clouds .band, .clouds .grain {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: calc(var(--band) * 1.7);
+    overflow: hidden;
+    /* a long, eased fade so the sky melts into the page with no visible edge */
+    --fade: linear-gradient(to bottom, #000 0%, rgba(0,0,0,0.93) 16%, rgba(0,0,0,0.78) 30%, rgba(0,0,0,0.56) 44%,
+            rgba(0,0,0,0.34) 58%, rgba(0,0,0,0.17) 71%, rgba(0,0,0,0.06) 84%, transparent 100%);
+    -webkit-mask-image: var(--fade);
+            mask-image: var(--fade);
+  }
+  .clouds .sky, .clouds .stars { position: absolute; inset: 0; }
+  .clouds .stars { opacity: 0; }
+  .clouds .stars canvas { position: absolute; inset: 0; width: 100%; height: 100%; animation: twinkle 3.4s ease-in-out infinite alternate; }
+  .clouds .stars canvas:nth-child(2) { animation-duration: 4.7s; animation-delay: -1.3s; }
+  .clouds .stars canvas:nth-child(3) { animation-duration: 6.1s; animation-delay: -2.9s; }
+  @keyframes twinkle { from { opacity: 1; } to { opacity: 0.45; } }
+  .clouds .moon {
+    position: absolute;
+    top: 7%; right: 9%;
+    width: clamp(22px, 2.6vw, 34px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    box-shadow: inset -0.2em 0.12em 0 0 #f6f8fb;
+    font-size: clamp(22px, 2.6vw, 34px);
+    transform: rotate(-18deg);
+    filter: drop-shadow(0 0 6px rgba(214, 226, 255, 0.55));
+    opacity: 0;
+  }
+  .clouds .sun { position: absolute; top: 0; left: 0; width: min(60vw, calc(var(--band) * 1.7)); aspect-ratio: 1; opacity: 0; }
+  .clouds .sun i { position: absolute; inset: 0; }
+  .clouds .sun .glare {
+    background: radial-gradient(circle at 0 0, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.55) 10%, rgba(255,255,255,0.18) 26%, rgba(255,255,255,0) 50%);
+  }
+  .clouds .sun .rays {
+    background: repeating-conic-gradient(from 92deg at 0 0, rgba(255,255,255,0.13) 0deg 3deg, rgba(255,255,255,0) 3deg 9deg, rgba(255,255,255,0.07) 9deg 10.5deg, rgba(255,255,255,0) 10.5deg 17deg);
+    -webkit-mask-image: radial-gradient(circle at 0 0, #000 0%, transparent 68%);
+            mask-image: radial-gradient(circle at 0 0, #000 0%, transparent 68%);
+    filter: blur(3px);
+  }
+  .clouds #cloud-gl {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: calc(var(--band) * 2.3);   /* the band, plus room below it for the cloud shadows */
+    display: block;
+  }
+  .clouds .grain { opacity: 0; mix-blend-mode: overlay; }
+  @media (prefers-reduced-motion: reduce) {
+    .clouds .stars canvas { animation: none; }
+  }
+
+  .preview {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 999px;
+    background: var(--page);
+    box-shadow: 0 0 0 1px var(--ring);
+  }
+  .preview button {
+    border: 0; background: none; color: inherit; cursor: pointer;
+    font: inherit; font-size: 0.8125rem; line-height: 1;
+    padding: 0.5rem 0.7rem;
+    border-radius: 999px;
+  }
+  .preview button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
+  .preview button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .stage {
+    position: relative;
+    z-index: 1;
+    flex: 1 1 auto;
+    align-self: stretch;
+    min-height: 320px;
+    touch-action: none;
+    cursor: grab;
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stage[data-dragging="true"] { cursor: grabbing; }
+  .stage:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 4px;
+    border-radius: 12px;
+  }
+  .stage canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    touch-action: none;
+  }
+  .hint {
+    position: absolute; left: 0; right: 0; bottom: 4.25rem;
+    text-align: center;
+    font-size: 0.8125rem;
+    letter-spacing: 0.01em;
+    opacity: 0.6;
+    pointer-events: none;
+    transition: opacity 600ms ease;
+  }
+  .hint[data-hidden="true"] { opacity: 0; }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 1rem; }
+
+  .weather {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    right: 1rem;
+    z-index: 2;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem;
+    padding: 0.75rem 0.875rem;
+    border-radius: 16px;
+    background: var(--page);
+  }
+  .caption { text-align: right; }
+  .caption { margin: 0; font-size: 0.8125rem; opacity: 0.7; }
+  .swatches { display: flex; gap: 0.75rem; }
+  .swatches button {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 0; padding: 0; cursor: pointer;
+    background: var(--c);
+    box-shadow: 0 0 0 1px var(--ring);
+  }
+  .swatches button[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--ink);
+  }
+  .swatches button:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
+
+  @media (prefers-reduced-motion: reduce) { .hint { transition: none; } }
+</style>
+</head>
+<body>
+<div class="clouds" id="clouds" aria-hidden="true">
+  <div class="band">
+    <div class="sky" id="sky"></div>
+    <div class="stars" id="stars"><canvas></canvas><canvas></canvas><canvas></canvas></div>
+    <div class="moon" id="moon"></div>
+  </div>
+  <canvas id="cloud-gl"></canvas>
+  <div class="sun" id="sun"><i class="rays"></i><i class="glare"></i></div>
+  <div class="grain" id="grain"></div>
+</div>
+<main>
+  <h1 class="sr-only">Interactive 3D laptop</h1>
+
+  <div class="stage" id="stage" role="button" tabindex="0" aria-pressed="false"
+       aria-label="3D laptop, lid closed. Press Enter or Space to open the lid. Use the arrow keys to rotate.">
+    <canvas id="canvas" aria-hidden="true"></canvas>
+    <span class="hint" id="hint" aria-hidden="true">Drag to rotate, tap to open</span>
+  </div>
+
+  <div class="preview" role="group" aria-label="Preview a time of day">
+    <button type="button" data-hour="" aria-pressed="true">Now</button>
+    <button type="button" data-hour="6" aria-pressed="false">Dawn</button>
+    <button type="button" data-hour="12" aria-pressed="false">Day</button>
+    <button type="button" data-hour="17.75" aria-pressed="false">Sunset</button>
+    <button type="button" data-hour="23" aria-pressed="false">Night</button>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- props ---------------- */
+  var PROPS = {
+    color: "#c4cad2",   // replaced by the sky palette as soon as the page starts
+    initialRotation: { yaw: -24, tilt: 40 }, // degrees: front-right corner nearest, seen from above
+    openAngle: 110                            // degrees
+  };
+
+  var stage = document.getElementById("stage");
+  var canvas = document.getElementById("canvas");
+  var hintEl = document.getElementById("hint");
+
+  function showFallback(msg) {
+    canvas.remove();
+    hintEl.remove();
+    var p = document.createElement("p");
+    p.className = "fallback";
+    p.textContent = msg;
+    stage.appendChild(p);
+    stage.removeAttribute("role");
+    stage.removeAttribute("tabindex");
+    stage.removeAttribute("aria-pressed");
+    stage.removeAttribute("aria-label");
+    stage.style.cursor = "default";
+  }
+
+  if (!window.THREE) { showFallback("The 3D library could not be loaded."); return; }
+
+  /* ---------------- dimensions (1 unit = 100 mm) ---------------- */
+  var W = 3.04, D = 2.15, R = 0.13;
+  var BASE_T = 0.07, LID_T = 0.04;
+  var BASE_BEVEL = 0.009, LID_BEVEL = 0.008;
+  var GAP = 0.004;
+
+  var WELL_W = 2.76, WELL_PAD = 0.03, WELL_DEPTH = 0.032;   // a deeper well, so the keys stand up inside it
+  var KEY_GAP = 0.03, KEY_H = 0.026, KEY_UNITS = 14.5;
+  var KEY_PITCH = (WELL_W - 2 * WELL_PAD + KEY_GAP) / KEY_UNITS;
+  var KEY_U = KEY_PITCH - KEY_GAP;
+  var FN_H = KEY_U * 0.6;
+  var WELL_D = 2 * WELL_PAD + FN_H + 5 * KEY_U + 5 * KEY_GAP;
+  var WELL_Z0 = -D / 2 + 0.13;
+  var WELL_CZ = WELL_Z0 + WELL_D / 2;
+
+  var PAD_W = 1.26, PAD_D = 0.78;
+  var PAD_CZ = (WELL_Z0 + WELL_D + D / 2) / 2 - 0.005;
+
+  var SCREEN_W = W - 0.13, SCREEN_H = D - 0.13;
+
+  /* ---------------- interaction tuning ---------------- */
+  var DEG = Math.PI / 180;
+  var TILT_MIN = -15 * DEG, TILT_MAX = 60 * DEG;
+  var DRAG_SENS = 0.008, FRICTION = 3.2, MAX_SPIN = 14;
+  var TAP_SLOP = 6, TAP_MS = 250, IDLE_MS = 3000;
+  var AUTO_SPIN = 0.22, FLOAT_AMP = 0.05, FRAME_RADIUS = 2.5;
+  var FILL = 0.55;          // share of the view width the laptop takes up
+  var FILL_WIDTH = 3.3;     // on-screen width of the laptop at a typical angle
+  var OPEN_HEIGHT = 3.7;    // vertical room the open laptop needs
+  var SPRING = { k: 54, d: 10 };            // ~0.8 s, ~5% overshoot
+  var SPRING_REDUCED = { k: 480, d: 44 };   // quick, no overshoot
+
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function smoothstep(x, a, b) { var t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+
+  /* ---------------- geometry helpers ---------------- */
+  function roundedRect(w, h, r, cx, cy, Ctor) {
+    cx = cx || 0; cy = cy || 0;
+    var p = new (Ctor || THREE.Shape)();
+    var hw = w / 2, hh = h / 2, rr = Math.min(r, hw, hh);
+    p.moveTo(cx - hw + rr, cy - hh);
+    p.lineTo(cx + hw - rr, cy - hh);
+    p.absarc(cx + hw - rr, cy - hh + rr, rr, -Math.PI / 2, 0, false);
+    p.lineTo(cx + hw, cy + hh - rr);
+    p.absarc(cx + hw - rr, cy + hh - rr, rr, 0, Math.PI / 2, false);
+    p.lineTo(cx - hw + rr, cy + hh);
+    p.absarc(cx - hw + rr, cy + hh - rr, rr, Math.PI / 2, Math.PI, false);
+    p.lineTo(cx - hw, cy - hh + rr);
+    p.absarc(cx - hw + rr, cy - hh + rr, rr, Math.PI, Math.PI * 1.5, false);
+    p.closePath();
+    return p;
+  }
+
+  function baseOutline(w, d, r) {
+    var s = new THREE.Shape();
+    var hw = w / 2, hd = d / 2;
+    var half = 0.2, ramp = 0.075, dip = 0.024;
+    s.moveTo(-hw + r, -hd);
+    s.lineTo(hw - r, -hd);
+    s.absarc(hw - r, -hd + r, r, -Math.PI / 2, 0, false);
+    s.lineTo(hw, hd - r);
+    s.absarc(hw - r, hd - r, r, 0, Math.PI / 2, false);
+    s.lineTo(half, hd);
+    s.bezierCurveTo(half - ramp / 2, hd, half - ramp / 2, hd - dip, half - ramp, hd - dip);
+    s.lineTo(-half + ramp, hd - dip);
+    s.bezierCurveTo(-half + ramp / 2, hd - dip, -half + ramp / 2, hd, -half, hd);
+    s.lineTo(-hw + r, hd);
+    s.absarc(-hw + r, hd - r, r, Math.PI / 2, Math.PI, false);
+    s.lineTo(-hw, -hd + r);
+    s.absarc(-hw + r, -hd + r, r, Math.PI, Math.PI * 1.5, false);
+    s.closePath();
+    return s;
+  }
+
+  // Horizontal slab, y = 0..thickness, soft bevel on every edge.
+  function slab(shape, thickness, bevel, curveSegments, bevelSegments) {
+    var g = new THREE.ExtrudeGeometry(shape, {
+      depth: thickness - 2 * bevel,
+      bevelEnabled: bevel > 0,
+      bevelThickness: bevel,
+      bevelSize: bevel,
+      bevelSegments: bevelSegments || 4,
+      curveSegments: curveSegments || 32
+    });
+    g.rotateX(Math.PI / 2);
+    g.translate(0, thickness - bevel, 0);
+    return g;
+  }
+  function flatUp(shape, y, seg) {
+    var g = new THREE.ShapeGeometry(shape, seg || 24);
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, y, 0);
+    return g;
+  }
+  function flatDown(shape, y, seg) {
+    var g = new THREE.ShapeGeometry(shape, seg || 24);
+    g.rotateX(Math.PI / 2);
+    g.translate(0, y, 0);
+    return g;
+  }
+  function mergeNonIndexed(list) {
+    var out = new THREE.BufferGeometry();
+    [["position", 3], ["normal", 3], ["uv", 2]].forEach(function (spec) {
+      var name = spec[0], total = 0, o = 0;
+      list.forEach(function (g) { total += g.attributes[name].array.length; });
+      var arr = new Float32Array(total);
+      list.forEach(function (g) { arr.set(g.attributes[name].array, o); o += g.attributes[name].array.length; });
+      out.setAttribute(name, new THREE.BufferAttribute(arr, spec[1]));
+    });
+    return out;
+  }
+  function fill(n, v) { var a = []; for (var i = 0; i < n; i++) a.push(v); return a; }
+
+  function keyLayout() {
+    var keys = [];
+    var x0 = -WELL_W / 2 + WELL_PAD;
+    var z = WELL_Z0 + WELL_PAD;
+    function addRow(units, depth) {
+      var x = x0;
+      units.forEach(function (u) {
+        var w = u * KEY_PITCH - KEY_GAP;
+        keys.push({ cx: x + w / 2, cz: z + depth / 2, w: w, d: depth });
+        x += u * KEY_PITCH;
+      });
+      z += depth + KEY_GAP;
+    }
+    addRow(fill(14, KEY_UNITS / 14), FN_H);
+    addRow(fill(13, 1).concat([1.5]), KEY_U);
+    addRow([1.5].concat(fill(13, 1)), KEY_U);
+    addRow([1.75].concat(fill(11, 1), [1.75]), KEY_U);
+    addRow([2.25].concat(fill(10, 1), [2.25]), KEY_U);
+
+    var zRow = z, x = x0;
+    [1, 1, 1, 1.25, 5, 1.25, 1].forEach(function (u) {
+      var w = u * KEY_PITCH - KEY_GAP;
+      keys.push({ cx: x + w / 2, cz: zRow + KEY_U / 2, w: w, d: KEY_U });
+      x += u * KEY_PITCH;
+    });
+    var half = (KEY_U - KEY_GAP * 0.6) / 2;
+    var zTop = zRow + half / 2, zBottom = zRow + KEY_U - half / 2;
+    function ax(i) { return x + i * KEY_PITCH + KEY_U / 2; }
+    keys.push({ cx: ax(0), cz: zBottom, w: KEY_U, d: half });
+    keys.push({ cx: ax(1), cz: zTop, w: KEY_U, d: half });
+    keys.push({ cx: ax(1), cz: zBottom, w: KEY_U, d: half });
+    keys.push({ cx: ax(2), cz: zBottom, w: KEY_U, d: half });
+    return keys;
+  }
+
+  /* ---------------- textures ---------------- */
+  function makeGrainNormalMap(size, strength) {
+    var n = size * size, raw = new Float32Array(n), h = new Float32Array(n), i, x, y;
+    for (i = 0; i < n; i++) raw[i] = Math.random();
+    function at(a, px, py) { return a[((py + size) % size) * size + ((px + size) % size)]; }
+    for (y = 0; y < size; y++) for (x = 0; x < size; x++) {
+      h[y * size + x] = (at(raw, x, y) * 4 + at(raw, x + 1, y) + at(raw, x - 1, y) + at(raw, x, y + 1) + at(raw, x, y - 1)) / 8;
+    }
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = size;
+    var ctx = cv.getContext("2d");
+    var img = ctx.createImageData(size, size);
+    for (y = 0; y < size; y++) for (x = 0; x < size; x++) {
+      var dx = (at(h, x + 1, y) - at(h, x - 1, y)) * strength;
+      var dy = (at(h, x, y + 1) - at(h, x, y - 1)) * strength;
+      var len = Math.sqrt(dx * dx + dy * dy + 1);
+      i = (y * size + x) * 4;
+      img.data[i] = (-dx / len * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (-dy / len * 0.5 + 0.5) * 255;
+      img.data[i + 2] = (1 / len * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    var tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1.5, 1.5);
+    tex.anisotropy = 4;
+    return tex;
+  }
+
+  var SCREEN_FONT = '"Sacramento", "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive';
+  var screenCanvas = document.createElement("canvas");
+  screenCanvas.width = 1024;
+  screenCanvas.height = Math.round(1024 * SCREEN_H / SCREEN_W);
+  function drawScreen() {
+    var w = screenCanvas.width, h = screenCanvas.height;
+    var ctx = screenCanvas.getContext("2d");
+    var bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, "#e3edf8");
+    bg.addColorStop(1, "#d2e2f3");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#2b2f36";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = Math.round(h * 0.36) + "px " + SCREEN_FONT;
+    ctx.fillText("hello.", w / 2, h * 0.5);
+  }
+
+  // Soft rounded-rectangle shadow sprite. The rect is drawn off-canvas and
+  // only its blurred shadow lands in view, which works in every browser.
+  function makeShadowTexture(blur) {
+    var s = 256, cv = document.createElement("canvas");
+    cv.width = cv.height = s;
+    var ctx = cv.getContext("2d");
+    var side = s * 0.56, o = (s - side) / 2, r = side * 0.06;
+    ctx.shadowColor = "rgba(255,255,255,1)";
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetX = 1000;
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    var x = o - 1000, y = o;
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + side - r, y);
+    ctx.quadraticCurveTo(x + side, y, x + side, y + r);
+    ctx.lineTo(x + side, y + side - r);
+    ctx.quadraticCurveTo(x + side, y + side, x + side - r, y + side);
+    ctx.lineTo(x + r, y + side);
+    ctx.quadraticCurveTo(x, y + side, x, y + side - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.fill();
+    return new THREE.CanvasTexture(cv);
+  }
+
+  /* ---------------- renderer ---------------- */
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+  } catch (err) {
+    showFallback("This browser could not start WebGL, so the 3D laptop is unavailable.");
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(30, 4 / 3, 1, 30);
+
+  /* ---------------- studio lighting ---------------- */
+  var hemiLight = null, keyLight = null;
+  (function () {
+    var env = new THREE.Scene();
+    var sweep = new THREE.Mesh(
+      new THREE.SphereGeometry(40, 32, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide })
+    );
+    sweep.material.color.setScalar(0.9);
+    env.add(sweep);
+    function panel(intensity, pos, w, h) {
+      var m = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+      );
+      m.material.color.setScalar(intensity);
+      m.position.set(pos[0], pos[1], pos[2]);
+      m.lookAt(0, 0, 0);
+      env.add(m);
+    }
+    panel(3.2, [-6, 6, 4], 9, 9);     // large soft key, upper left
+    panel(1.8, [0, 6, -7], 12, 4);    // overhead/back, grazes the lid
+    panel(0.7, [7, 1.5, 2], 4, 6);    // low fill, right
+    var pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(env, 0.04).texture;
+    pmrem.dispose();
+
+    // sky light from above, bounce light from below, and the key from the upper left
+    hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.35);
+    scene.add(hemiLight);
+    keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    keyLight.position.set(-5, 7, 5);
+    scene.add(keyLight);
+  })();
+
+  /* ---------------- materials ---------------- */
+  var screenTex = new THREE.CanvasTexture(screenCanvas);
+  screenTex.encoding = THREE.sRGBEncoding;
+  screenTex.anisotropy = 8;
+  drawScreen();
+  screenTex.needsUpdate = true;
+
+  var mat = {
+    body: new THREE.MeshPhysicalMaterial({
+      metalness: 0.88, roughness: 0.56,
+      normalMap: makeGrainNormalMap(256, 2.2),
+      normalScale: new THREE.Vector2(0.16, 0.16)
+    }),
+    emblem: new THREE.MeshPhysicalMaterial({ metalness: 1, roughness: 0.14 }),
+    well: new THREE.MeshStandardMaterial({ metalness: 0.6, roughness: 0.6 }),
+    trackpad: new THREE.MeshStandardMaterial({ metalness: 0.85, roughness: 0.45 }),
+    keys: new THREE.MeshStandardMaterial({ color: 0x0c0e11, metalness: 0.1, roughness: 0.5 }),
+    legend: new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false }),
+    ports: new THREE.MeshStandardMaterial({ color: 0x020203, metalness: 0.2, roughness: 0.6 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0x010101, metalness: 0, roughness: 0.12 }),
+    screen: new THREE.MeshStandardMaterial({
+      color: 0x010101, metalness: 0, roughness: 0.25,
+      emissive: 0xffffff, emissiveMap: screenTex, emissiveIntensity: 0,
+      toneMapped: false
+    })
+  };
+
+  var bodyNow = new THREE.Color(), bodyTarget = new THREE.Color(), colorReady = false;
+  function applyColor(col) {
+    mat.body.color.copy(col);
+    mat.emblem.color.copy(col).multiplyScalar(0.72);
+    mat.well.color.copy(col).multiplyScalar(0.26);   // dark floor, so the gaps between keys read as depth
+    // keys are a slightly deeper shade of the body; legends flip between dark and light to stay readable
+    mat.keys.color.copy(col).multiplyScalar(0.78);
+    var lum = 0.78 * (0.2126 * col.r + 0.7152 * col.g + 0.0722 * col.b);
+    if (lum > 0.2) mat.legend.color.setRGB(0.02, 0.025, 0.035); else mat.legend.color.setRGB(0.9, 0.92, 0.95);
+    mat.trackpad.color.copy(col).multiplyScalar(0.78);
+  }
+  function setColor(hex) {
+    bodyTarget.set(hex).convertSRGBToLinear();
+    if (!colorReady || reducedMotion) { bodyNow.copy(bodyTarget); applyColor(bodyNow); colorReady = true; }
+    wake();
+  }
+
+  // The sky layer calls this: body takes the sky's tone, upward-facing surfaces
+  // the highlight colour, and sides and undersides the shadow colour.
+  var shadowTint = new THREE.Color(0x10161f), shadowTintGoal = new THREE.Color(0x10161f);
+  window.__setLaptopSky = function (body, highlight, shadow, groundShadow) {
+    if (groundShadow) shadowTintGoal.set(groundShadow).convertSRGBToLinear();
+    setColor(body);
+    if (keyLight) keyLight.color.set(highlight).convertSRGBToLinear();
+    if (hemiLight) {
+      hemiLight.color.set(highlight).convertSRGBToLinear();
+      hemiLight.groundColor.set(shadow).convertSRGBToLinear();
+    }
+    wake();
+  };
+
+  /* ---------------- model ---------------- */
+  var tiltG = new THREE.Group();   // vertical drag
+  var shiftG = new THREE.Group();  // keeps the laptop centred as it opens
+  var bobG = new THREE.Group();    // idle float
+  var yawG = new THREE.Group();    // horizontal drag
+  var slideG = new THREE.Group();
+  var model = new THREE.Group();
+  var lidPivot = new THREE.Group();   // sits exactly on the hinge line
+  var lidBody = new THREE.Group();
+  var shadowYaw = new THREE.Group();
+  var shadowSlide = new THREE.Group();
+
+  scene.add(tiltG);
+  tiltG.add(shiftG);
+  shiftG.add(shadowYaw, bobG);
+  shadowYaw.add(shadowSlide);
+  bobG.add(yawG);
+  yawG.add(slideG);
+  slideG.add(model);
+
+  (function buildModel() {
+    var floorY = BASE_T - WELL_DEPTH;
+    function add(parent, geo, material) { var m = new THREE.Mesh(geo, material); parent.add(m); return m; }
+
+    // invisible, generous tap target (never rendered, still raycast)
+    var hit = add(model, new THREE.BoxGeometry(W + 0.3, 0.5, D + 0.3), mat.body);
+    hit.position.y = BASE_T / 2;
+    hit.visible = false;
+
+    // base with a real keyboard well
+    var outline = baseOutline(W - 2 * BASE_BEVEL, D - 2 * BASE_BEVEL, R - BASE_BEVEL);
+    outline.holes.push(roundedRect(WELL_W, WELL_D, 0.035, 0, WELL_CZ, THREE.Path));
+    add(model, slab(outline, BASE_T, BASE_BEVEL), mat.body);
+    add(model, flatUp(roundedRect(WELL_W, WELL_D, 0.035, 0, -WELL_CZ), floorY), mat.well);
+    add(model, flatDown(roundedRect(WELL_W, WELL_D, 0.035, 0, WELL_CZ), 0), mat.body);
+
+    // keys, merged into one draw call
+    var cache = {};
+    var parts = keyLayout().map(function (k) {
+      var id = k.w.toFixed(4) + "x" + k.d.toFixed(4);
+      if (!cache[id]) cache[id] = slab(roundedRect(k.w - 0.014, k.d - 0.014, 0.018), KEY_H, 0.007, 6, 3);   // raised caps with rounded shoulders
+      var g = cache[id].clone();
+      g.translate(k.cx, floorY, k.cz);
+      return g;
+    });
+    add(model, mergeNonIndexed(parts), mat.keys);
+
+    // key legends: one transparent sheet lying just above the key tops
+    var LABELS = ["esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "",
+      "`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "delete",
+      "tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\",
+      "caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "return",
+      "shift", "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "shift",
+      "fn", "ctrl", "opt", "cmd", "", "cmd", "opt",
+      "<", "^", "v", ">"];
+    var lc = document.createElement("canvas");
+    lc.width = 2048; lc.height = 1024;
+    var lx = lc.getContext("2d");
+    var ppuX = lc.width / WELL_W, ppuY = lc.height / WELL_D, keyPx = KEY_U * ppuX;
+    lx.fillStyle = "#ffffff";
+    lx.textAlign = "center";
+    lx.textBaseline = "middle";
+    keyLayout().forEach(function (k, i) {
+      var label = LABELS[i];
+      if (!label) return;
+      lx.save();
+      lx.translate((k.cx + WELL_W / 2) * ppuX, (k.cz - WELL_Z0) * ppuY);
+      lx.scale(1, ppuY / ppuX);                       // the sheet is not square, so keep glyphs in proportion
+      if (i >= LABELS.length - 4) {                   // arrow keys: small triangles
+        var a = keyPx * 0.11;
+        lx.rotate({ "<": -Math.PI / 2, "^": 0, "v": Math.PI, ">": Math.PI / 2 }[label]);
+        lx.beginPath(); lx.moveTo(0, -a); lx.lineTo(a, a * 0.8); lx.lineTo(-a, a * 0.8); lx.closePath(); lx.fill();
+      } else {
+        var size = i < 14 ? keyPx * 0.19 : label.length > 1 ? keyPx * 0.2 : keyPx * 0.36;
+        lx.font = "500 " + Math.round(size) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+        lx.fillText(label, 0, size * 0.04);
+      }
+      lx.restore();
+    });
+    var legendTex = new THREE.CanvasTexture(lc);
+    legendTex.anisotropy = 8;
+    mat.legend.map = legendTex;
+    mat.legend.needsUpdate = true;
+    var legendGeo = new THREE.PlaneGeometry(WELL_W, WELL_D);
+    legendGeo.rotateX(-Math.PI / 2);
+    legendGeo.translate(0, floorY + KEY_H + 0.0009, WELL_CZ);
+    add(model, legendGeo, mat.legend);
+
+    // trackpad outline
+    var ring = roundedRect(PAD_W, PAD_D, 0.05, 0, -PAD_CZ);
+    ring.holes.push(roundedRect(PAD_W - 0.009, PAD_D - 0.009, 0.046, 0, -PAD_CZ, THREE.Path));
+    add(model, flatUp(ring, BASE_T + 0.0006), mat.trackpad);
+
+    // two pill ports on the left flank
+    [-0.8, -0.63].forEach(function (z) {
+      var g = new THREE.ShapeGeometry(roundedRect(0.09, 0.026, 0.013), 10);
+      g.rotateY(-Math.PI / 2);
+      g.translate(-W / 2 - 0.0006, BASE_T / 2, z);
+      add(model, g, mat.ports);
+    });
+
+    // lid
+    lidPivot.position.set(0, BASE_T, -D / 2);
+    lidBody.position.set(0, GAP, D / 2);
+    model.add(lidPivot);
+    lidPivot.add(lidBody);
+    add(lidBody, slab(roundedRect(W - 2 * LID_BEVEL, D - 2 * LID_BEVEL, R - LID_BEVEL), LID_T, LID_BEVEL), mat.body);
+    add(lidBody, flatDown(roundedRect(W - 0.04, D - 0.04, R - 0.02), -0.0006), mat.glass);
+
+    var screen = new THREE.ShapeGeometry(roundedRect(SCREEN_W, SCREEN_H, 0.05), 16);
+    var pos = screen.attributes.position, uv = screen.attributes.uv;
+    for (var i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / SCREEN_W + 0.5, pos.getY(i) / SCREEN_H + 0.5);
+    screen.rotateX(Math.PI / 2);
+    screen.translate(0, -0.0012, 0);
+    add(lidBody, screen, mat.screen);
+  })();
+
+  // contact shadow: a tight one for closed, a wider soft one for open
+  function shadowPlane(blur) {
+    var g = new THREE.PlaneGeometry(1, 1);
+    g.rotateX(-Math.PI / 2);
+    var m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      map: makeShadowTexture(blur), color: 0x10161f, transparent: true, depthWrite: false, opacity: 0, toneMapped: false
+    }));
+    m.position.y = -0.42;
+    shadowSlide.add(m);
+    return m;
+  }
+  var shadowTight = shadowPlane(16);
+  var shadowSoft = shadowPlane(34);
+  shadowTight.scale.set(W / 0.56, 1, D / 0.56);
+
+  /* ---------------- state ---------------- */
+  var c = {
+    yaw: PROPS.initialRotation.yaw * DEG,
+    tilt: clamp(PROPS.initialRotation.tilt * DEG, TILT_MIN, TILT_MAX),
+    vYaw: 0, vTilt: 0,
+    dragging: false,
+    lastInput: performance.now(),
+    idleBlend: 0,
+    inView: true
+  };
+  var sim = { angle: 0, vel: 0, phase: 0, sway: 0, swayCenter: 0, wasIdle: false };
+  var yawTarget = null;         // set when the laptop turns to face the viewer
+  var FRONT_CONE = 32 * DEG;    // how far off-centre still counts as "front"
+  var open = false;
+  var openRad = Math.max(1, PROPS.openAngle) * DEG;
+  var pointer = null;
+  var hintShown = true;
+
+  var mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var reducedMotion = mq.matches;
+  var onMq = function () { reducedMotion = mq.matches; wake(); };
+  if (mq.addEventListener) mq.addEventListener("change", onMq); else if (mq.addListener) mq.addListener(onMq);
+
+  /* ---------------- render loop (on demand) ---------------- */
+  var raf = 0, lastT = 0, idleTimer = 0;
+  function wake() { if (!raf) raf = requestAnimationFrame(frame); }
+
+  function frame(t) {
+    raf = 0;
+    var dt = Math.min(Math.max((t - lastT) / 1000, 0.001), 1 / 30);
+    lastT = t;
+    var now = performance.now();
+    var active = false;
+
+    // rotation inertia
+    if (c.dragging) {
+      c.lastInput = now;
+    } else if (Math.abs(c.vYaw) > 0.003 || Math.abs(c.vTilt) > 0.003) {
+      c.yaw += c.vYaw * dt;
+      var tl = c.tilt + c.vTilt * dt;
+      if (tl < TILT_MIN || tl > TILT_MAX) { tl = clamp(tl, TILT_MIN, TILT_MAX); c.vTilt = 0; }
+      c.tilt = tl;
+      var k = Math.exp(-FRICTION * dt);
+      c.vYaw *= k; c.vTilt *= k;
+      c.lastInput = now;
+      active = true;
+    } else {
+      c.vYaw = 0; c.vTilt = 0;
+    }
+
+    // turn to face the viewer before/while the lid opens
+    if (yawTarget !== null && !c.dragging) {
+      var gap = yawTarget - c.yaw;
+      if (Math.abs(gap) < 0.002 || reducedMotion) { c.yaw = yawTarget; yawTarget = null; }
+      else { c.yaw += gap * (1 - Math.exp(-dt * 6)); }
+      c.lastInput = now;
+      active = true;
+    }
+
+    // lid spring: retargets from the current angle and velocity
+    // hold the lid shut until the laptop has mostly turned to face the viewer
+    var turning = yawTarget !== null && Math.abs(yawTarget - c.yaw) > 0.5;
+    var target = open && !turning ? openRad : 0;
+    if (Math.abs(target - sim.angle) > 1e-4 || Math.abs(sim.vel) > 1e-3) {
+      var sp = reducedMotion ? SPRING_REDUCED : SPRING;
+      var rem = dt;
+      while (rem > 1e-6) {
+        var h = Math.min(rem, 1 / 240);
+        sim.vel += (sp.k * (target - sim.angle) - sp.d * sim.vel) * h;
+        sim.angle += sim.vel * h;
+        if (sim.angle < 0) { sim.angle = 0; sim.vel = -sim.vel * 0.25; } // lands on the base
+        rem -= h;
+      }
+      c.lastInput = now;
+      active = true;
+    } else {
+      sim.angle = target; sim.vel = 0;
+    }
+
+    // idle float and auto-rotate
+    var idle = !reducedMotion && !c.dragging && !pointer && !active && c.inView && now - c.lastInput >= IDLE_MS;
+    if (idle) {
+      c.idleBlend = Math.min(1, c.idleBlend + dt / 1.5);
+      if (!sim.wasIdle) { sim.wasIdle = true; sim.sway = 0; sim.swayCenter = c.yaw; }
+      if (open) {
+        // open: sway gently so the screen never turns away
+        sim.sway += dt * c.idleBlend;
+        c.yaw = sim.swayCenter + Math.sin(sim.sway * 0.45) * 0.3;
+      } else {
+        c.yaw += AUTO_SPIN * c.idleBlend * dt;
+      }
+      sim.phase += dt * c.idleBlend;
+      active = true;
+    } else {
+      c.idleBlend = 0;
+      sim.wasIdle = false;
+    }
+
+    // colour eases to the weather's tone
+    var cd = Math.abs(bodyNow.r - bodyTarget.r) + Math.abs(bodyNow.g - bodyTarget.g) + Math.abs(bodyNow.b - bodyTarget.b);
+    if (cd > 0.002) { bodyNow.lerp(bodyTarget, 1 - Math.exp(-dt * 6)); applyColor(bodyNow); active = true; }
+    else if (cd > 0) { bodyNow.copy(bodyTarget); applyColor(bodyNow); }
+
+    // the contact shadow takes its tint from the sky
+    var sd = Math.abs(shadowTint.r - shadowTintGoal.r) + Math.abs(shadowTint.g - shadowTintGoal.g) + Math.abs(shadowTint.b - shadowTintGoal.b);
+    if (sd > 0.002) {
+      if (reducedMotion) shadowTint.copy(shadowTintGoal); else shadowTint.lerp(shadowTintGoal, 1 - Math.exp(-dt * 6));
+      shadowTight.material.color.copy(shadowTint);
+      shadowSoft.material.color.copy(shadowTint);
+      active = true;
+    }
+
+    // apply
+    var frac = clamp(sim.angle / openRad, 0, 1);
+    tiltG.rotation.x = c.tilt;
+    yawG.rotation.y = c.yaw;
+    shadowYaw.rotation.y = c.yaw;
+    bobG.position.y = Math.sin(sim.phase * 1.3) * FLOAT_AMP;
+    shiftG.position.y = -(BASE_T / 2 + frac * 0.85);
+    slideG.position.z = frac * 0.25;
+    shadowSlide.position.z = frac * 0.25;
+    lidPivot.rotation.x = -sim.angle;
+    mat.screen.emissiveIntensity = smoothstep(frac, 2 / 3, 1);
+
+    shadowTight.material.opacity = 0.044 * (1 - frac);
+    shadowSoft.material.opacity = 0.016 + 0.024 * frac;
+    shadowSoft.scale.set(W / 0.56 * 1.08, 1, D / 0.56 * (1.08 + 0.3 * frac));
+    shadowSoft.position.z = -0.3 * frac;
+
+    renderer.render(scene, camera);
+
+    if (active) {
+      wake();
+    } else if (!reducedMotion && c.inView && now - c.lastInput < IDLE_MS) {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(wake, IDLE_MS - (now - c.lastInput) + 20);
+    }
+  }
+
+  /* ---------------- sizing ---------------- */
+  function resize() {
+    var w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    var aspect = w / h;
+    var vHalf = camera.fov * DEG / 2;
+    var hHalf = Math.atan(Math.tan(vHalf) * aspect);
+    // the laptop spans about two thirds of the view width, but never so close
+    // that the open lid runs off the top or bottom
+    var byWidth = (FILL_WIDTH / FILL) / (2 * Math.tan(hHalf));
+    var byHeight = OPEN_HEIGHT / (2 * Math.tan(vHalf));
+    var dist = Math.max(byWidth, byHeight);
+    camera.aspect = aspect;
+    camera.position.set(0, 0, dist);
+    camera.near = Math.max(0.1, dist - 5);
+    camera.far = dist + 5;
+    camera.updateProjectionMatrix();
+    wake();
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  else window.addEventListener("resize", resize);
+  resize();
+
+  // The stage fills the page, so it is always on screen. (An on-screen check used to
+  // gate the idle motion here; it could report "hidden" inside an embedded viewer and
+  // silently switch the idle spin off, so it is gone. Browsers already pause drawing
+  // for hidden tabs.)
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) { c.lastInput = performance.now(); wake(); }
+  });
+
+  canvas.addEventListener("webglcontextlost", function (e) { e.preventDefault(); });
+  canvas.addEventListener("webglcontextrestored", wake);
+
+  /* ---------------- interaction ---------------- */
+  var raycaster = new THREE.Raycaster();
+  var ndc = new THREE.Vector2();
+  function hitTest(x, y) {
+    var r = canvas.getBoundingClientRect();
+    ndc.set((x - r.left) / r.width * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    return raycaster.intersectObject(model, true).length > 0;
+  }
+
+  function setOpen(v) {
+    open = v;
+    if (open) {
+      // if the back or side is showing, swing round so it opens toward the viewer
+      var turns = Math.round(c.yaw / (Math.PI * 2));
+      var local = c.yaw - turns * Math.PI * 2;           // -180..180 degrees, 0 = front
+      if (Math.abs(local) > FRONT_CONE) {
+        yawTarget = turns * Math.PI * 2 + (local > 0 ? FRONT_CONE : -FRONT_CONE);
+        c.vYaw = 0;
+      }
+    } else {
+      yawTarget = null;
+    }
+    stage.setAttribute("aria-pressed", String(open));
+    stage.setAttribute("aria-label",
+      "3D laptop, lid " + (open ? "open" : "closed") + ". Press Enter or Space to " +
+      (open ? "close" : "open") + " the lid. Use the arrow keys to rotate.");
+    wake();
+  }
+
+  function touch() {
+    c.lastInput = performance.now();
+    c.idleBlend = 0;
+    if (hintShown) { hintShown = false; hintEl.setAttribute("data-hidden", "true"); }
+    wake();
+  }
+
+  stage.addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (pointer) return; // one pointer drives; extra fingers are ignored
+    var wasSpinning = Math.sqrt(c.vYaw * c.vYaw + c.vTilt * c.vTilt) > 0.4;
+    c.vYaw = 0; c.vTilt = 0;
+    yawTarget = null;
+    pointer = {
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
+      t0: e.timeStamp, tLast: e.timeStamp, vYaw: 0, vTilt: 0, drag: false,
+      caught: wasSpinning // a tap that catches a spinning laptop just stops it
+    };
+    try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+    touch();
+  });
+
+  stage.addEventListener("pointermove", function (e) {
+    var p = pointer;
+    if (!p || e.pointerId !== p.id) return;
+    if (!p.drag) {
+      var mx = e.clientX - p.x0, my = e.clientY - p.y0;
+      if (Math.sqrt(mx * mx + my * my) < TAP_SLOP) return;
+      p.drag = true;
+      p.x = e.clientX; p.y = e.clientY; p.tLast = e.timeStamp;
+      c.dragging = true;
+      stage.setAttribute("data-dragging", "true");
+      return;
+    }
+    var dYaw = (e.clientX - p.x) * DRAG_SENS;
+    var before = c.tilt;
+    c.yaw += dYaw;
+    c.tilt = clamp(c.tilt + (e.clientY - p.y) * DRAG_SENS, TILT_MIN, TILT_MAX);
+    var dTilt = c.tilt - before;
+    var dt = Math.max((e.timeStamp - p.tLast) / 1000, 1 / 240);
+    p.vYaw = lerp(p.vYaw, dYaw / dt, 0.5);
+    p.vTilt = lerp(p.vTilt, dTilt / dt, 0.5);
+    p.x = e.clientX; p.y = e.clientY; p.tLast = e.timeStamp;
+    c.lastInput = performance.now();
+    wake();
+  });
+
+  function endPointer(e, cancelled) {
+    var p = pointer;
+    if (!p || e.pointerId !== p.id) return;
+    pointer = null;
+    if (p.drag) {
+      var flick = !cancelled && e.timeStamp - p.tLast < 90;
+      c.vYaw = flick ? clamp(p.vYaw, -MAX_SPIN, MAX_SPIN) : 0;
+      c.vTilt = flick ? clamp(p.vTilt, -MAX_SPIN, MAX_SPIN) : 0;
+      c.dragging = false;
+      stage.setAttribute("data-dragging", "false");
+    } else if (!cancelled && !p.caught && e.timeStamp - p.t0 < TAP_MS && hitTest(e.clientX, e.clientY)) {
+      setOpen(!open);
+    }
+    c.lastInput = performance.now();
+    wake();
+  }
+  stage.addEventListener("pointerup", function (e) { endPointer(e, false); });
+  stage.addEventListener("pointercancel", function (e) { endPointer(e, true); });
+  stage.addEventListener("lostpointercapture", function (e) { endPointer(e, true); });
+
+  stage.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!e.repeat) setOpen(!open);
+      touch();
+      return;
+    }
+    var dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    yawTarget = null;
+    if (reducedMotion) {
+      c.yaw += dir[0] * 10 * DEG;
+      c.tilt = clamp(c.tilt + dir[1] * 10 * DEG, TILT_MIN, TILT_MAX);
+    } else {
+      c.vYaw = clamp(c.vYaw + dir[0] * 0.7, -4, 4);
+      c.vTilt = clamp(c.vTilt + dir[1] * 0.7, -4, 4);
+    }
+    touch();
+  });
+
+  /* ---------------- colour swatches ---------------- */
+  var swatches = document.querySelectorAll(".swatches button");
+  Array.prototype.forEach.call(swatches, function (b) {
+    b.addEventListener("click", function () {
+      Array.prototype.forEach.call(swatches, function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+      setColor(b.getAttribute("data-color"));
+      document.getElementById("caption").textContent = "Previewing: " + b.getAttribute("data-name").toLowerCase();
+    });
+  });
+
+  /* ---------------- go ---------------- */
+  setColor(PROPS.color);
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load('120px "Sacramento"').then(function () {
+      drawScreen();
+      screenTex.needsUpdate = true;
+      wake();
+    }).catch(function () {});
+  }
+  wake();
+})();
+</script>
+
+<script>
+/* Sky layer. Clouds are generated every frame in a WebGL shader: layered fractal
+   noise with domain warping and a soft threshold, in three depth layers. The sky
+   gradient, stars, moon and sun glare are plain page elements behind them.
+   Everything follows the device's local time and blends between looks. */
+(function () {
+  "use strict";
+  var root = document.getElementById("clouds");
+  var cv = document.getElementById("cloud-gl");
+  var skyEl = document.getElementById("sky"), starsEl = document.getElementById("stars");
+  var moonEl = document.getElementById("moon"), sunEl = document.getElementById("sun");
+  var grainEl = document.getElementById("grain");
+  if (!root || !cv) return;
+
+  function hex(h) { var n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
+
+  /* ---------- the looks ---------- */
+  var LOOKS = {
+    day: {
+      skyTop: hex("#2F7FDB"), skyLow: hex("#8EC5F2"), skyAngle: 180,
+      lit: hex("#FFFFFF"), shade: hex("#D6E4F2"), shade2: hex("#D6E4F2"), rim: hex("#FFFFFF"), haze: hex("#9CCBF3"),
+      light: [-0.35, 0.94], lightPos: [0, 1],
+      cover: 0.47, scale: 1.3, stretch: 1.15, persp: 1.0, soft: 0.08, billow: 0.6, band: 0, streak: 0, warp: 0.4,
+      rimK: 0.15, lightK: 2.2, core: 0.14,
+      stars: 0, moon: 0, sun: 1, grain: 0,
+      page: hex("#EFF6FD"), ground: hex("#3B6FB0"), shadow: hex("#2C4A70"), body: hex("#DCE8F5"), bodyHi: hex("#FFFFFF"), bodyLo: hex("#9FC0E6")
+    },
+    sunset: {
+      skyTop: hex("#8FA0E8"), skyLow: hex("#F8DDB8"), skyAngle: 215,
+      lit: hex("#F7A072"), shade: hex("#F08A8A"), shade2: hex("#9B7FC7"), rim: hex("#FFE27A"), haze: hex("#F6C9B4"),
+      light: [-0.8, -0.6], lightPos: [0, 0],
+      cover: 0.76, scale: 0.62, stretch: 1.05, persp: 0.3, soft: 0.2, billow: 0.55, band: 0, streak: 0, warp: 0.6,
+      rimK: 0.7, lightK: 3.0, core: 0,
+      stars: 0, moon: 0, sun: 0, grain: 0,
+      page: hex("#FDF2EC"), ground: hex("#B4587A"), shadow: hex("#7A4A7A"), body: hex("#F2A892"), bodyHi: hex("#FFD9A0"), bodyLo: hex("#B08FD0")
+    },
+    night: {
+      skyTop: hex("#0B1A2B"), skyLow: hex("#5C7890"), skyAngle: 150,
+      lit: hex("#C9D1D9"), shade: hex("#2A3847"), shade2: hex("#2A3847"), rim: hex("#C9D1D9"), haze: hex("#3F566B"),
+      light: [0.6, 0.8], lightPos: [1, 1],
+      cover: 0.50, scale: 0.95, stretch: 1.7, persp: 0.5, soft: 0.20, billow: 0.10, band: 1, streak: 1, warp: 1.0,
+      rimK: 0.25, lightK: 2.5, core: 0.10,
+      stars: 1, moon: 1, sun: 0, grain: 1,
+      page: hex("#E9EEF5"), ground: hex("#22324A"), shadow: hex("#0B1420"), body: hex("#627488"), bodyHi: hex("#C9D1D9"), bodyLo: hex("#2A3847")
+    },
+    dawn: {   // a softer, paler sunset
+      skyTop: hex("#AEBBEF"), skyLow: hex("#FBEAD2"), skyAngle: 200,
+      lit: hex("#FBC9AC"), shade: hex("#F3B6B6"), shade2: hex("#BCAADB"), rim: hex("#FFEFB4"), haze: hex("#F8DCCB"),
+      light: [-0.8, -0.5], lightPos: [0, 0],
+      cover: 0.56, scale: 0.80, stretch: 1.3, persp: 0.4, soft: 0.22, billow: 0.45, band: 0, streak: 0, warp: 0.6,
+      rimK: 0.6, lightK: 2.4, core: 0.05,
+      stars: 0.15, moon: 0.2, sun: 0, grain: 0.2,
+      page: hex("#FAF1F4"), ground: hex("#9A78A8"), shadow: hex("#7A6A8A"), body: hex("#ECCFCB"), bodyHi: hex("#FFF0DC"), bodyLo: hex("#B9A9D6")
+    }
+  };
+  // local hour -> look. Day/sunset and sunset/night cross-fade over 40 minutes
+  // around 4:30pm and 7pm; dawn is itself the two-hour blend from night to day.
+  var STOPS = [[0, "night"], [5, "night"], [6, "dawn"], [7, "day"], [16.17, "day"], [16.83, "sunset"],
+               [18.67, "sunset"], [19.33, "night"], [24, "night"]];
+
+  function mix(a, b, k) {
+    if (typeof a === "number") return a + (b - a) * k;
+    var out = [];
+    for (var i = 0; i < a.length; i++) out.push(a[i] + (b[i] - a[i]) * k);
+    return out;
+  }
+  function mixLook(a, b, k) { var o = {}; for (var key in a) o[key] = mix(a[key], b[key], k); return o; }
+  function lookAt(hour) {
+    for (var i = 0; i < STOPS.length - 1; i++) {
+      if (hour >= STOPS[i][0] && hour <= STOPS[i + 1][0]) {
+        var span = STOPS[i + 1][0] - STOPS[i][0];
+        return mixLook(LOOKS[STOPS[i][1]], LOOKS[STOPS[i + 1][1]], span ? (hour - STOPS[i][0]) / span : 0);
+      }
+    }
+    return mixLook(LOOKS.night, LOOKS.night, 0);
+  }
+  var forcedHour = null;
+  function currentHour() {
+    if (forcedHour !== null) return forcedHour;
+    var d = new Date();
+    return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+  }
+
+  /* ---------- page elements behind the clouds ---------- */
+  function css(c, a) {
+    return "rgba(" + Math.round(c[0] * 255) + "," + Math.round(c[1] * 255) + "," + Math.round(c[2] * 255) + "," + (a === undefined ? 1 : a) + ")";
+  }
+  function toHex(c) {
+    var v = (1 << 24) | (Math.round(c[0] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[2] * 255);
+    return "#" + v.toString(16).slice(1);
+  }
+  function applyDom(L) {
+    skyEl.style.background = "linear-gradient(" + L.skyAngle.toFixed(1) + "deg, " + css(L.skyTop) + " 0%, " + css(L.skyLow) + " 100%)";
+    document.documentElement.style.setProperty("--page", css(L.page));   // the whole page takes a very light tint of the sky
+    starsEl.style.opacity = L.stars.toFixed(3);
+    moonEl.style.opacity = L.moon.toFixed(3);
+    sunEl.style.opacity = L.sun.toFixed(3);
+    grainEl.style.opacity = (L.grain * 0.13).toFixed(3);
+  }
+
+  function paintStars() {
+    var w = root.clientWidth, band = starsEl.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var layers = starsEl.querySelectorAll("canvas");
+    var count = Math.max(90, Math.min(360, Math.round(w * band / 1500)));
+    for (var l = 0; l < layers.length; l++) {
+      var c = layers[l];
+      c.width = Math.round(w * dpr); c.height = Math.round(band * dpr);
+      var ctx = c.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (var i = 0; i < count / layers.length; i++) {
+        var x = Math.random() * w, y = Math.pow(Math.random(), 1.9) * band * 0.6;   // densest near the top
+        var big = Math.random() < 0.12;
+        ctx.globalAlpha = big ? 1 : 0.35 + Math.random() * 0.6;
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(x, y, big ? 1.1 + Math.random() * 0.5 : 0.45 + Math.random() * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  function paintGrain() {
+    var g = document.createElement("canvas");
+    g.width = g.height = 128;
+    var ctx = g.getContext("2d"), img = ctx.createImageData(128, 128);
+    for (var i = 0; i < img.data.length; i += 4) {
+      var v = Math.random() * 255;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    grainEl.style.backgroundImage = "url(" + g.toDataURL() + ")";
+    grainEl.style.backgroundSize = "128px 128px";
+  }
+
+  /* ---------- the cloud shader ---------- */
+  var VERT = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+  var FRAG = [
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH",
+    "precision highp float;",
+    "#else",
+    "precision mediump float;",
+    "#endif",
+    "uniform vec2 uRes; uniform float uTime; uniform float uSplit; uniform float uAspect;",
+    "uniform float uCover; uniform float uScale; uniform float uStretch; uniform float uPersp; uniform float uSoft;",
+    "uniform float uBillow; uniform float uBand; uniform float uStreak; uniform float uRimK; uniform float uLightK;",
+    "uniform float uCore; uniform float uShadowA; uniform float uWarp;",
+    "uniform vec2 uLight; uniform vec2 uLightPos;",
+    "uniform vec3 uLit; uniform vec3 uShade; uniform vec3 uShade2; uniform vec3 uRim; uniform vec3 uHaze; uniform vec3 uShadowC;",
+    "float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }",
+    "float noise(vec2 p){",
+    "  vec2 i = floor(p), f = fract(p);",
+    "  vec2 u = f * f * (3.0 - 2.0 * f);",
+    "  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);",
+    "}",
+    // five octaves; x = smooth fBm, y = billowy fBm (rounded cauliflower bumps)
+    "vec2 fb(vec2 p){",
+    "  float a = 0.5; vec2 v = vec2(0.0);",
+    "  for (int i = 0; i < 5; i++) { float n = noise(p); v += a * vec2(n, abs(2.0 * n - 1.0)); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }",
+    "  return vec2(v.x, v.y * 1.55);",
+    "}",
+    "float fb3(vec2 p){",
+    "  float a = 0.5; float v = 0.0;",
+    "  for (int i = 0; i < 3; i++) { v += a * noise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }",
+    "  return v;",
+    "}",
+    // night: a loose diagonal band from middle left to bottom right
+    "float bandTerm(vec2 uvb){ return uBand * (0.22 - smoothstep(0.0, 0.5, abs(uvb.y - (0.75 - 0.4 * uvb.x))) * 0.6); }",
+    "vec2 layerPos(vec2 base, float sc, float speed, float seed){",
+    "  vec2 p = base * sc; p.x /= uStretch; p.x -= uTime * speed * sc; return p + seed;",
+    "}",
+    "vec4 cloudLayer(vec2 base, vec2 uvb, float sc, float speed, float covAdd, float bias, float haze, float op, float seed){",
+    "  vec2 p = layerPos(base, sc, speed, seed);",
+    // domain warp, itself drifting slowly so the shapes keep changing
+    "  vec2 q = vec2(fb3(p * 0.7 + vec2(0.0, uTime * 0.012)), fb3(p * 0.7 + vec2(5.2, 1.3 - uTime * 0.009)));",
+    "  vec2 pw = p + (q - 0.5) * uWarp;",
+    "  vec2 f = fb(pw);",
+    "  float n = mix(f.x, f.y, uBillow);",
+    "  float cov = clamp(uCover + covAdd + bias * (uvb.y - 0.5) * uPersp + bandTerm(uvb), 0.0, 1.0);",
+    "  float thr = mix(0.80, 0.28, cov);",
+    "  float d = smoothstep(thr, thr + uSoft, n);",          // soft threshold
+    "  if (d <= 0.0) return vec4(0.0);",
+    "  float facing = (fb3(pw) - fb3(pw + uLight * 0.14)) * uLightK;", // thinner toward the light = lit side
+    "  float l = clamp(0.6 + facing + dot(uvb - 0.5, uLight) * 0.3, 0.0, 1.0);",
+    "  l *= 1.0 - uCore * smoothstep(thr + uSoft, thr + uSoft + 0.35, n);",
+    "  float far = clamp(distance(uvb, uLightPos) * 0.9 - 0.15, 0.0, 1.0);",
+    "  vec3 c = mix(mix(uShade, uShade2, far), uLit, l);",    // far side cooler, lit side warmer
+    "  float edge = 4.0 * d * (1.0 - d);",
+    "  c = mix(c, uRim, clamp(uRimK * edge * (0.25 + facing * 3.0), 0.0, 1.0));", // glowing thin edges
+    "  c = mix(c, uHaze, haze);",
+    "  float a = d * op;",
+    "  return vec4(c * a, a);",
+    "}",
+    "void main(){",
+    "  vec2 uv = gl_FragCoord.xy / uRes;",
+    "  if (uv.y < uSplit) {",
+    // below the band: a faint, blurred shadow of the nearest cloud layer
+    "    float sv = uv.y / uSplit;",
+    "    vec2 uvb = vec2(uv.x, sv);",
+    "    float s = 1.0 + uPersp * (1.0 - sv) * 0.25;",
+    "    vec2 base = vec2((uv.x - 0.5) * uAspect, sv - 1.0) * s;",
+    "    vec2 p = layerPos(base, uScale, 0.05, 0.0);",
+    "    float thr = mix(0.80, 0.28, clamp(uCover + bandTerm(uvb), 0.0, 1.0));",
+    "    float a = smoothstep(thr - 0.12, thr + 0.3, fb3(p)) * uShadowA * smoothstep(0.0, 0.35, sv) * smoothstep(1.05, 0.7, sv);",
+    "    gl_FragColor = vec4(uShadowC * a, a);",
+    "    return;",
+    "  }",
+    "  float v = (uv.y - uSplit) / (1.0 - uSplit);",        // 0 at the bottom of the band, 1 at the top
+    "  vec2 uvb = vec2(uv.x, v);",
+    "  float s = 1.0 + uPersp * (1.0 - v) * 0.25;",          // slightly smaller lower down
+    "  vec2 base = vec2((uv.x - 0.5) * uAspect, v - 1.0) * s;",
+    "  vec4 col = vec4(0.0);",
+    // night: thin flat streaks near the bottom
+    "  float ns = fb3(vec2(base.x * 0.5 - uTime * 0.012, v * 15.0));",
+    "  float st = smoothstep(0.5, 0.72, ns) * smoothstep(0.7, 0.3, v) * uStreak * 0.6;",
+    "  col = vec4(mix(uShade, uLit, 0.45) * st, st);",
+    "  vec4 L;",
+    "  L = cloudLayer(base, uvb, uScale * 2.7, 0.020, -0.06, -0.5, 0.45, 0.75, 31.7); col = col * (1.0 - L.a) + L;", // far
+    "  L = cloudLayer(base, uvb, uScale * 1.7, 0.032, -0.04, -0.1, 0.20, 0.90, 12.3); col = col * (1.0 - L.a) + L;", // middle
+    "  L = cloudLayer(base, uvb, uScale,       0.050,  0.00, 0.45, 0.00, 1.00, 0.0);  col = col * (1.0 - L.a) + L;", // near
+    "  gl_FragColor = col * smoothstep(0.12, 0.66, v);",      // sit high and dissolve well above the content
+    "}"
+  ].join("\n");
+
+  var gl = null;
+  try { gl = cv.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) {}
+  var U = {}, glReady = false;
+  if (gl) {
+    var compile = function (type, src) {
+      var sh = gl.createShader(type);
+      gl.shaderSource(sh, src); gl.compileShader(sh);
+      return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null;
+    };
+    var vs = compile(gl.VERTEX_SHADER, VERT), fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    var prog = gl.createProgram();
+    if (vs && fs) {
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        var loc = gl.getAttribLocation(prog, "p");
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        ["uRes", "uTime", "uSplit", "uAspect", "uCover", "uScale", "uStretch", "uPersp", "uSoft", "uBillow", "uBand", "uStreak",
+         "uRimK", "uLightK", "uCore", "uShadowA", "uWarp", "uLight", "uLightPos", "uLit", "uShade", "uShade2", "uRim", "uHaze", "uShadowC"]
+          .forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+        glReady = true;
+      }
+    }
+  }
+  if (!glReady) cv.style.display = "none";   // the sky, stars, moon and sun still show
+  cv.addEventListener("webglcontextlost", function (e) { e.preventDefault(); glReady = false; cv.style.display = "none"; });
+
+  var SPLIT = 1 - 1 / 2.3;        // share of the canvas below the band (shadow zone)
+  var quality = 1;                // lowered automatically if frames run slow
+  function resize() {
+    var w = cv.clientWidth, h = cv.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (!w || !h) return;
+    // clouds are soft, so a modest pixel budget is plenty and keeps every device at full frame rate
+    var scale = Math.min(1, Math.sqrt(320000 / (w * dpr * h * dpr))) * dpr * quality;
+    var bw = Math.max(64, Math.round(w * scale)), bh = Math.max(64, Math.round(h * scale));
+    if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; gl.viewport(0, 0, bw, bh); }
+  }
+
+  /* ---------- run ---------- */
+  var mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var goal = lookAt(currentHour()), shown = goal;
+  var raf = 0, last = 0, clock = 40, slowAvg = 16, frames = 0, settled = false;
+
+  function draw(t) {
+    raf = 0;
+    var dt = last ? Math.min((t - last) / 1000, 0.1) : 0.016;
+    var rawDt = last ? t - last : 16;
+    last = t;
+    if (!mq.matches) clock += dt;
+
+    // ease toward the goal look so nothing switches abruptly
+    if (!settled) {
+      var k = mq.matches ? 1 : 1 - Math.exp(-dt * 2.2);
+      shown = mixLook(shown, goal, k);
+      settled = Math.abs(shown.cover - goal.cover) + Math.abs(shown.skyTop[0] - goal.skyTop[0]) +
+                Math.abs(shown.skyTop[2] - goal.skyTop[2]) + Math.abs(shown.stars - goal.stars) + Math.abs(shown.sun - goal.sun) < 0.004;
+      if (settled) shown = goal;
+      applyDom(shown);
+    }
+
+    if (glReady) {
+      resize();
+      var L = shown;
+      gl.uniform2f(U.uRes, cv.width, cv.height);
+      gl.uniform1f(U.uTime, clock);
+      gl.uniform1f(U.uSplit, SPLIT);
+      gl.uniform1f(U.uAspect, cv.width / (cv.height * (1 - SPLIT)));
+      gl.uniform1f(U.uCover, L.cover); gl.uniform1f(U.uScale, L.scale); gl.uniform1f(U.uStretch, L.stretch);
+      gl.uniform1f(U.uPersp, L.persp); gl.uniform1f(U.uSoft, L.soft); gl.uniform1f(U.uBillow, L.billow);
+      gl.uniform1f(U.uBand, L.band); gl.uniform1f(U.uStreak, L.streak); gl.uniform1f(U.uRimK, L.rimK);
+      gl.uniform1f(U.uLightK, L.lightK); gl.uniform1f(U.uCore, L.core); gl.uniform1f(U.uShadowA, 0.07); gl.uniform1f(U.uWarp, L.warp);
+      gl.uniform2f(U.uLight, L.light[0], L.light[1]); gl.uniform2f(U.uLightPos, L.lightPos[0], L.lightPos[1]);
+      gl.uniform3fv(U.uLit, L.lit); gl.uniform3fv(U.uShade, L.shade); gl.uniform3fv(U.uShade2, L.shade2);
+      gl.uniform3fv(U.uRim, L.rim); gl.uniform3fv(U.uHaze, L.haze); gl.uniform3fv(U.uShadowC, L.shadow);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // if this device cannot hold the frame rate, render fewer pixels rather than stutter
+      if (rawDt < 250) {
+        slowAvg += (rawDt - slowAvg) * 0.08;
+        if (++frames > 50 && slowAvg > 22 && quality > 0.3 && !window.__skyHoldQuality) { quality *= 0.7; frames = 0; slowAvg = 16; }
+      }
+    }
+    // with reduced motion the sky holds still, so stop once it has settled
+    if (!(mq.matches && settled)) loop();
+  }
+  function loop() { if (!raf) raf = requestAnimationFrame(draw); }
+
+  function retarget() {
+    goal = lookAt(currentHour());
+    settled = false;
+    if (window.__setLaptopSky) {
+      try { window.__setLaptopSky(toHex(goal.body), toHex(goal.bodyHi), toHex(goal.bodyLo), toHex(goal.ground)); } catch (e) {}
+    }
+    loop();
+  }
+
+  var buttons = document.querySelectorAll(".preview button");
+  Array.prototype.forEach.call(buttons, function (b) {
+    b.addEventListener("click", function () {
+      Array.prototype.forEach.call(buttons, function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+      var h = b.getAttribute("data-hour");
+      forcedHour = h === "" ? null : parseFloat(h);
+      retarget();
+    });
+  });
+  window.__setSkyHour = function (h) { forcedHour = h; retarget(); };
+
+  var resizeTimer = 0;
+  window.addEventListener("resize", function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(function () { paintStars(); loop(); }, 150); });
+  if (mq.addEventListener) mq.addEventListener("change", loop);
+  document.addEventListener("visibilitychange", function () { last = 0; });
+
+  document.documentElement.setAttribute("data-theme", "light");   // the tinted page is always light, so keep dark text
+  paintStars();
+  paintGrain();
+  applyDom(shown);
+  retarget();
+  setInterval(retarget, 30000);
+})();
+</script>
+</body>
+</html>
