@@ -285,7 +285,6 @@
   var AUTO_SPIN = 0.22, FLOAT_AMP = 0.05, FRAME_RADIUS = 2.5;
   var FILL = 0.55;          // share of the view width the laptop takes up
   var FILL_WIDTH = 3.3;     // on-screen width of the laptop at a typical angle
-  var OPEN_HEIGHT = 3.7;    // vertical room the open laptop needs
   var SPRING = { k: 54, d: 10 };            // ~0.8 s, ~5% overshoot
   var SPRING_REDUCED = { k: 480, d: 44 };   // quick, no overshoot
 
@@ -847,6 +846,17 @@
     lidPivot.rotation.x = -sim.angle;
     mat.screen.emissiveIntensity = smoothstep(frac, 2 / 3, 1);
 
+    // keep the whole laptop in frame: ease the camera back as the lid opens or the view steepens
+    var want = fitView(c.yaw, c.tilt, sim.angle, frac);
+    if (!camDist || reducedMotion) { camDist = want.dist; camY = want.y; }
+    else if (Math.abs(want.dist - camDist) > 0.003 || Math.abs(want.y - camY) > 0.002) {
+      var ease = 1 - Math.exp(-dt * 5);
+      camDist += (want.dist - camDist) * ease;
+      camY += (want.y - camY) * ease;
+      active = true;
+    }
+    camera.position.set(0, camY, camDist);
+
     shadowTight.material.opacity = 0.044 * (1 - frac);
     shadowSoft.material.opacity = 0.016 + 0.024 * frac;
     shadowSoft.scale.set(W / 0.56 * 1.08, 1, D / 0.56 * (1.08 + 0.3 * frac));
@@ -862,25 +872,62 @@
     }
   }
 
+  /* ---------------- framing ----------------
+     The camera distance is worked out from where the laptop's corners actually land
+     on screen, for the current tilt, lid angle and window shape, so nothing is ever
+     cut off. Closed, it is checked for every turn of the spin (so the zoom does not
+     pulse as it rotates); open, for the current view plus the idle sway. */
+  var view = { tanV: Math.tan(15 * DEG), tanH: Math.tan(15 * DEG) * 4 / 3 };
+  var camDist = 0, camY = 0;
+  var FIT_MARGIN = 1.08;      // breathing room around the laptop
+  var fit = { dist: 0, y: 0 };
+  function fitView(yaw, tilt, lidAngle, frac) {
+    var slide = frac * 0.25, drop = -(BASE_T / 2 + frac * 0.85);
+    var ly = BASE_T + GAP + LID_T + D * Math.sin(lidAngle), lz = -D / 2 + D * Math.cos(lidAngle);
+    var pts = [
+      [-W / 2, 0, -D / 2], [W / 2, 0, -D / 2], [-W / 2, 0, D / 2], [W / 2, 0, D / 2],   // base
+      [-W / 2, BASE_T + LID_T, -D / 2], [W / 2, BASE_T + LID_T, -D / 2],               // hinge edge
+      [-W / 2, ly, lz], [W / 2, ly, lz]                                                 // far edge of the lid
+    ];
+    var spread = Math.PI + (0.36 - Math.PI) * frac;     // all the way round when closed, the sway when open
+    var st = Math.sin(tilt), ct = Math.cos(tilt);
+    var proj = [], lo = Infinity, hi = -Infinity, s, i;
+    for (s = -6; s <= 6; s++) {
+      var a = yaw + spread * s / 6, sa = Math.sin(a), ca = Math.cos(a);
+      for (i = 0; i < pts.length; i++) {
+        var px = pts[i][0], py = pts[i][1] + drop, pz = pts[i][2] + slide;
+        var x = px * ca + pz * sa, z = -px * sa + pz * ca;          // turn
+        var y = py * ct - z * st, depth = py * st + z * ct;         // tilt; depth is toward the camera
+        proj.push(x, y, depth);
+        if (y < lo) lo = y;
+        if (y > hi) hi = y;
+      }
+    }
+    var cy = (lo + hi) / 2, need = 0;                   // aim the camera at the vertical middle of the laptop
+    for (i = 0; i < proj.length; i += 3) {
+      var d = Math.max(Math.abs(proj[i]) * FIT_MARGIN / view.tanH,
+                       (Math.abs(proj[i + 1] - cy) + FLOAT_AMP) * FIT_MARGIN / view.tanV) + proj[i + 2];
+      if (d > need) need = d;
+    }
+    // never closer than the preferred size, even when there is room to spare
+    fit.dist = Math.max(need, (FILL_WIDTH / FILL) / (2 * view.tanH));
+    fit.y = cy;
+    return fit;
+  }
+
   /* ---------------- sizing ---------------- */
   function resize() {
     var w = stage.clientWidth, h = stage.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     var aspect = w / h;
-    var vHalf = camera.fov * DEG / 2;
-    var hHalf = Math.atan(Math.tan(vHalf) * aspect);
-    // the laptop spans about two thirds of the view width, but never so close
-    // that the open lid runs off the top or bottom
-    var byWidth = (FILL_WIDTH / FILL) / (2 * Math.tan(hHalf));
-    var byHeight = OPEN_HEIGHT / (2 * Math.tan(vHalf));
-    var dist = Math.max(byWidth, byHeight);
+    view.tanV = Math.tan(camera.fov * DEG / 2);
+    view.tanH = view.tanV * aspect;
     camera.aspect = aspect;
-    camera.position.set(0, 0, dist);
-    camera.near = Math.max(0.1, dist - 5);
-    camera.far = dist + 5;
+    camera.near = 1;
+    camera.far = 80;
     camera.updateProjectionMatrix();
-    wake();
+    wake();   // the next frame re-frames the laptop for the new window shape
   }
   if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
   else window.addEventListener("resize", resize);
