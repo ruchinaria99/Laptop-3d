@@ -717,7 +717,8 @@
 
     // stickers on the outside of the lid: upright when the laptop is closed and seen from the front
     function sticker(src, w, h, x, z, turn) {
-      var m = new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 0.42, metalness: 0, opacity: 0 });
+      // unlit and not tone-mapped, so the artwork keeps its exact colours at every time of day
+      var m = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: 0, toneMapped: false });
       m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2;
       var g = new THREE.PlaneGeometry(w, h);
       g.rotateX(-Math.PI / 2);
