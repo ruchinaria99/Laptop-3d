@@ -6385,5 +6385,26 @@ var STK_DESIG = "data:image/webp;base64,UklGRnCVAABXRUJQVlA4WAoAAAAQAAAAAwIAfwIA
   })(0);
 })();
 </script>
+
+<script>
+/* phones: the phone always starts just below the subtext, whatever the screen's height, so the two never overlap */
+(function () {
+  var phx = document.getElementById("phx"), intro = document.getElementById("intro");
+  if (!phx || !intro) return;
+  function absTop(el) { var t = 0; while (el) { t += el.offsetTop; el = el.offsetParent; } return t; }   // layout position, unaffected by the scroll animation's transforms
+  function place() {
+    if (getComputedStyle(phx).display === "none") return;
+    var par = phx.offsetParent; if (!par) return;
+    var gap = Math.max(18, Math.min(32, window.innerHeight * 0.03));
+    var top = absTop(intro) + intro.offsetHeight - absTop(par) + gap;
+    phx.style.top = Math.round(top) + "px";
+  }
+  place();
+  window.addEventListener("resize", place);
+  window.addEventListener("load", place);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+  if (window.ResizeObserver) new ResizeObserver(place).observe(intro);
+})();
+</script>
 </body>
 </html>
