@@ -58,6 +58,9 @@
   .hx-g * { pointer-events: none !important; }
   .hx-g > img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; }
   .hx-g > .ln-note { left: 0 !important; top: 0 !important; transform: none !important; margin: 0; }
+  /* the sky and the black page always reach the very bottom, even while the browser's toolbars slide away during a scroll */
+  .clouds, .hx-dark { bottom: auto; height: 100vh; height: 100lvh; min-height: 100%; }
+  html { background-color: var(--page); }
   .hx-dark { position: fixed; inset: 0; z-index: 51; background: var(--hx-ink, #050506); pointer-events: none; opacity: 0; visibility: hidden; }
   .hx-word { position: absolute; left: 0; top: 0; z-index: 52; margin: 0; pointer-events: none; white-space: nowrap;
     font: 500 var(--hx-f, 120px)/1 "General Sans", "SF Pro Display", "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.01em;
