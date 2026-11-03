@@ -61,6 +61,7 @@
   /* the sky and the black page always reach the very bottom, even while the browser's toolbars slide away during a scroll */
   .clouds, .hx-dark { bottom: auto; height: 100vh; height: 100lvh; min-height: 100%; }
   html { background-color: var(--page); }
+  html.hx-nav-dark, html[data-theme="dark"] { background-color: var(--page); }
   .hx-dark { position: fixed; inset: 0; z-index: 51; background: var(--hx-ink, #050506); pointer-events: none; opacity: 0; visibility: hidden; }
   .hx-word { position: absolute; left: 0; top: 0; z-index: 52; margin: 0; pointer-events: none; white-space: nowrap;
     font: 500 var(--hx-f, 120px)/1 "General Sans", "SF Pro Display", "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.01em;
@@ -505,7 +506,8 @@
   @media (max-width: 720px) { .ln-cur { display: none !important; } html.ln-own-cursor, html.ln-own-cursor * { cursor: auto !important; } }
   @media (max-width: 720px) {
     .flat, .hero .desk-pad, .hero .sticker-layer, .hero > .ln-layer, .hero .ln-tab, .hero .ln-all, .hero .ln-own, .ln-peek, .ln-peek-hint { display: none !important; }
-    .hero { overflow: hidden; }
+    .hero { overflow: visible; }   /* the phone runs on below the fold instead of being cut at the first screen's height */
+    .hx-pin { overflow: clip; }
     .phx { display: block; position: absolute; z-index: 6; left: 50%; top: 30%; translate: -50% 0; width: 88vw; max-width: 440px; aspect-ratio: 900 / 1784; --t: min(7.4vw, 37px);
       transform-origin: 50% 50%; perspective: 1700px; will-change: transform; }
     .phx-ph { position: absolute; inset: 0; transform-style: preserve-3d; }
@@ -4174,6 +4176,7 @@ var STK_DESIG = "data:image/webp;base64,UklGRnCVAABXRUJQVlA4WAoAAAAQAAAAAwIAfwIA
   }
   function applyDom(L) {
     skyEl.style.background = "linear-gradient(" + L.skyAngle.toFixed(1) + "deg, " + css(L.skyTop) + " 0%, " + css(L.skyLow) + " 100%)";
+    document.documentElement.style.setProperty("--sky-low", css(L.skyLow));
     document.documentElement.style.setProperty("--page", css(L.page));
     // the name, links and intro sit on the sky: dark text on a light sky, light text on a night sky
     var sl = 0.2126 * L.skyTop[0] + 0.7152 * L.skyTop[1] + 0.0722 * L.skyTop[2];
